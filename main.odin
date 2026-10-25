@@ -27,6 +27,7 @@ Voter :: struct {
     id : u64,
     fullname : string,
     key_pub : rsa.Public_Key,
+    alreadyVoted : bool,
 }
 
 Candidate :: struct {
@@ -77,21 +78,34 @@ main :: proc () {
 
         rsa.public_key_set_priv(&p.key_pub, &p.key_prv)
     }
+    fmt.println()
 
 
 
+    fmt.println("Forming a list of eligible voters")
     voters : [dynamic]Voter
     for &p in people {
-        if p.country != .Ukraine { continue }
-        if p.age < 18 { continue }
+        fmt.printfln("Examining %v", p.fullname)
 
-        append(&voters, Voter{ p.id, p.fullname, p.key_pub })
+        if p.country != .Ukraine {
+            fmt.printfln("\tINELIGIBLE: You have to be a citizen of Ukraine to vote")
+            continue
+        }
+        if p.age < 18 {
+            fmt.printfln("\tINELIGIBLE: You have to be an adult to vote")
+            continue
+        }
+
+        fmt.printfln("\tVOTER REGISTERED")
+        append(&voters, Voter{ p.id, p.fullname, p.key_pub, false })
     }
+    fmt.println()
 
-    fmt.println("Valid voter list")
+    fmt.println("List of eligible voters")
     for v in voters {
         fmt.printfln("%v", v.fullname)
     }
+    fmt.println()
 
 
 
@@ -110,10 +124,20 @@ main :: proc () {
     }
     
     rsa.public_key_set_priv(&ec.key_pub, &ec.key_prv)
-
     EC_PUBLIC_KEY := ec.key_pub
+    fmt.println()
 
 
+
+    fmt.println("List of candidates")
+    for c in ec.candidates {
+        fmt.printfln("%v", c.fullname)
+    }
+    fmt.println()
+
+
+
+    fmt.printfln("VOTING STARTED")
     encryptedBallots : [dynamic]EncryptedBallot
     for &p in people {
         ballot := Ballot{
@@ -181,10 +205,13 @@ main :: proc () {
             append(&encryptedBallots, eb)
         }
     }
+    fmt.println("VOTING ENDED")
+    fmt.println()
 
 
 
-    slice.shuffle(encryptedBallots)
+    fmt.println("COUNTING VOTES")
+    rand.shuffle(encryptedBallots[:])
     for eb, i in encryptedBallots {
         fmt.printfln("Processing ballot #%v", i)
 
@@ -219,6 +246,11 @@ main :: proc () {
             continue
         }
 
+        if voters[vi].alreadyVoted {
+            fmt.printfln("\tDISMISSED: %v has already voted", people[pi].fullname)
+            continue
+        }
+
         context.user_ptr = &ballot.candidate_id
         ci, cf := slice.linear_search_proc(ec.candidates, proc (c : Candidate) -> bool {
             return (c.id == (cast(^u64)context.user_ptr)^)
@@ -248,8 +280,10 @@ main :: proc () {
 
 
         ec.candidates[ci].votes += 1
+        voters[vi].alreadyVoted = true
         fmt.printfln("\tACCEPTED: vote counted")
     }
+    fmt.println()
 
 
 
@@ -257,7 +291,4 @@ main :: proc () {
     for c in ec.candidates {
         fmt.printfln("%v:\n\t%v votes", c.fullname, c.votes)
     }
-
-
-    fmt.println("Hello, World!")
 }
