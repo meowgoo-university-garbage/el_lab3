@@ -54,19 +54,20 @@ EncryptedBallot :: struct {
 }
 
 main :: proc () {
-    voter_v0 := Person{ id = 0, fullname = "Vitalya Gryb", country = .Ukraine, age = 23 }
-    voter_v1 := Person{ id = 1, fullname = "Svitlana Zhizha", country = .Ukraine, age = 23 }
-    voter_f0 := Person{ id = 2, fullname = "Zheka Zrada", country = .Russia, age = 23 }
-
-    people : []^Person = {
-        &voter_v0,
-        &voter_v1,
-        &voter_f0,
+    people : []Person = {
+        Person{ id = 0, fullname = "Vitalya Gryb", country = .Ukraine, age = 23 },
+        Person{ id = 1, fullname = "Svitlana Zhizha", country = .Ukraine, age = 27 },
+        Person{ id = 2, fullname = "Zheka Zrada", country = .Russia, age = 19 },
+        Person{ id = 3, fullname = "Grzegorz Brzeczyszczykiewicz", country = .Poland, age = 153 },
+        Person{ id = 4, fullname = "little boy", country = .Ukraine, age = 4 },
+        Person{ id = 5, fullname = "Yaroslav Aboba", country = .Ukraine, age = 34 },
+        Person{ id = 6, fullname = "Vova Ugabuga", country = .Ukraine, age = 7182 },
+        Person{ id = 7, fullname = "Mariya Kavun", country = .Ukraine, age = 26 },
     }
 
 
 
-    for p in people {
+    for &p in people {
         result := rsa.private_key_generate(&p.key_prv)
         if result {
             fmt.printfln("Generated private key for %v", p.fullname)
@@ -145,11 +146,13 @@ main :: proc () {
             candidate_id = rand.choice(ec.candidates).id,
         }
 
-        if rand.float32() < 0.1 {
+        // violation: impersonate someone
+        if rand.float32() < 0.15 {
             ballot.voter_id = rand.choice(voters[:]).id
         }
 
-        if rand.float32() < 0.1 {
+        // violation: invalid ballot
+        if rand.float32() < 0.15 {
             ballot.candidate_id = cast(u64)rand.int63()
         }
 
@@ -169,10 +172,10 @@ main :: proc () {
         })
 
         if cf {
-            fmt.printfln(" votes for %v", ec.candidates[ci].fullname)
+            fmt.printf(" votes for %v", ec.candidates[ci].fullname)
         }
         else {
-            fmt.printfln(" votes for an invalid candidate with id %v", ballot.candidate_id)
+            fmt.printf(" votes for an invalid candidate with id %v", ballot.candidate_id)
         }
 
 
@@ -181,8 +184,12 @@ main :: proc () {
             ballot    = make([]u8, rsa.public_key_size(&EC_PUBLIC_KEY)),
             signature = make([]u8, rsa.public_key_size(&EC_PUBLIC_KEY)),
         }
+
+        // violation: invalid encryption
+        fail_encrypt := rand.float32() < 0.15
+
         result_encrypt := rsa.encrypt_oaep(
-            &EC_PUBLIC_KEY,
+            fail_encrypt ? &p.key_pub : &EC_PUBLIC_KEY,
             .SHA512,
             slice.bytes_from_ptr(&ballot, size_of(Ballot)),
             eb.ballot)
@@ -201,9 +208,20 @@ main :: proc () {
 
         append(&encryptedBallots, eb)
 
-        if rand.float32() < 0.1 {
+        // violation: repeat voting
+        if rand.float32() < 0.15 {
             append(&encryptedBallots, eb)
+            fmt.printf(" twice")
         }
+        else {
+            fmt.printf("")
+        }
+
+        if fail_encrypt {
+            fmt.printf(", but fails to encrypt it correctly")
+        }
+
+        fmt.println()
     }
     fmt.println("VOTING ENDED")
     fmt.println()
@@ -227,10 +245,8 @@ main :: proc () {
             continue
         }
 
-        // fmt.printfln("Ballot: %v", ballot)
-
         context.user_ptr = &ballot.voter_id
-        pi, _ := slice.linear_search_proc(people, proc (p : ^Person) -> bool {
+        pi, _ := slice.linear_search_proc(people, proc (p : Person) -> bool {
             return (p.id == (cast(^u64)context.user_ptr)^)
         })
 
