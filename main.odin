@@ -47,16 +47,18 @@ Candidate :: struct {
     votes : int,
 }
 
+
+
+RegistrationBuerau :: struct {
+    voters : [dynamic]Voter,
+}
+
 ElectionCommission :: struct {
     candidates : []Candidate,
     voters : [dynamic]AnonymousVoter,
 
     key_prv : rsa.Key_Private,
     key_pub : rsa.Key_Public,
-}
-
-RegistrationBuerau :: struct {
-    voters : [dynamic]Voter,
 }
 
 
@@ -224,10 +226,7 @@ main :: proc () {
             registrationNumber = p.receivedRegistrationNumber,
             candidate_id = candidate.id,
         }
-
-        if p.rememberedUid == 0 {
-            p.rememberedUid = ballot.uid
-        }
+        if p.rememberedUid == 0 { p.rememberedUid = ballot.uid }
 
         eb : EncryptedBallot
         ok : bool
