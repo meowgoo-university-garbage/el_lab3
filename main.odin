@@ -4,7 +4,8 @@ import "core:fmt"
 import "core:slice"
 import "core:math/rand"
 
-import "core:crypto/rsa"
+// import "core:crypto/rsa"
+import "./rsa"
 import "core:crypto/hash"
 
 Country :: enum {
@@ -19,14 +20,24 @@ Person :: struct {
     country : Country,
     age : int,
 
-    key_prv : rsa.Private_Key,
-    key_pub : rsa.Public_Key,
+    receivedRegistrationNumber : u64,
+    rememberedUid : u64,
+    rememberedViolation : bool,
+
+    key_prv : rsa.Key_Private,
+    key_pub : rsa.Key_Public,
 }
 
 Voter :: struct {
-    id : u64,
+    person_id : u64,
     fullname : string,
-    key_pub : rsa.Public_Key,
+    key_pub : rsa.Key_Public,
+    registrationNumber : u64,
+}
+
+AnonymousVoter :: struct {
+    key_pub : rsa.Key_Public,
+    registrationNumber : u64,
     alreadyVoted : bool,
 }
 
@@ -38,14 +49,23 @@ Candidate :: struct {
 
 ElectionCommission :: struct {
     candidates : []Candidate,
+    voters : [dynamic]AnonymousVoter,
 
-    key_prv : rsa.Private_Key,
-    key_pub : rsa.Public_Key,
+    key_prv : rsa.Key_Private,
+    key_pub : rsa.Key_Public,
 }
 
+RegistrationBuerau :: struct {
+    voters : [dynamic]Voter,
+}
+
+
+
+
 Ballot :: struct {
-    voter_id     : u64,
-    candidate_id : u64,
+    uid                 : u64,
+    registrationNumber  : u64,
+    candidate_id        : u64,
 }
 
 EncryptedBallot :: struct {
@@ -53,12 +73,19 @@ EncryptedBallot :: struct {
     signature : []u8,
 }
 
+PublicizedBallot :: struct {
+    uid                 : u64,
+    candidate_id        : u64,
+}
+
+
+
 main :: proc () {
     people : []Person = {
         Person{ id = 0, fullname = "Vitalya Gryb", country = .Ukraine, age = 23 },
         Person{ id = 1, fullname = "Svitlana Zhizha", country = .Ukraine, age = 27 },
-        Person{ id = 2, fullname = "Zheka Zrada", country = .Russia, age = 19 },
-        Person{ id = 3, fullname = "Grzegorz Brzeczyszczykiewicz", country = .Poland, age = 153 },
+        Person{ id = 2, fullname = "Zheka Zrada", country = .Ukraine, age = 19 },
+        Person{ id = 3, fullname = "Grzegorz Brzeczyszczykiewicz", country = .Ukraine, age = 153 },
         Person{ id = 4, fullname = "little boy", country = .Ukraine, age = 4 },
         Person{ id = 5, fullname = "Yaroslav Aboba", country = .Ukraine, age = 34 },
         Person{ id = 6, fullname = "Vova Ugabuga", country = .Ukraine, age = 7182 },
@@ -68,45 +95,95 @@ main :: proc () {
 
 
     for &p in people {
-        result := rsa.private_key_generate(&p.key_prv)
-        if result {
-            fmt.printfln("Generated private key for %v", p.fullname)
-        }
-        else {
-            fmt.printfln("Failed to generate private key for %v", p.fullname)
-            continue
-        }
-
-        rsa.public_key_set_priv(&p.key_pub, &p.key_prv)
+        p.key_prv, p.key_pub = rsa.keygen()
+        fmt.printfln("Generated private key for %v", p.fullname)
     }
     fmt.println()
 
 
 
-    fmt.println("Forming a list of eligible voters")
-    voters : [dynamic]Voter
-    for &p in people {
-        fmt.printfln("Examining %v", p.fullname)
 
-        if p.country != .Ukraine {
-            fmt.printfln("\tINELIGIBLE: You have to be a citizen of Ukraine to vote")
-            continue
+    anonymousVoters : [dynamic]AnonymousVoter
+
+    {
+        rb : RegistrationBuerau
+        for i : int = 0; i < len(people); i += 1 {
+            p := &people[i]
+
+
+            fmt.printfln("Person %v tries to register", p.fullname)
+
+
+            context.user_ptr = &p.id
+            vi, vf := slice.linear_search_proc(rb.voters[:], proc (v : Voter) -> bool {
+                return (v.person_id == (cast(^u64)context.user_ptr)^)
+            })
+
+            if vf {
+                fmt.printfln("\tDECLINED: Person already registered")
+                continue
+            }
+
+
+
+            if p.country != .Ukraine {
+                fmt.printfln("\tINELIGIBLE: You have to be a citizen of Ukraine to vote")
+                p.rememberedViolation = true
+                continue
+            }
+            if p.age < 18 {
+                fmt.printfln("\tINELIGIBLE: You have to be an adult to vote")
+                p.rememberedViolation = true
+                continue
+            }
+
+            rn := rand.uint64()
+
+            voter := Voter{
+                person_id = p.id,
+                fullname = p.fullname,
+
+                key_pub = p.key_pub,
+                registrationNumber = rn,
+            }
+            p.receivedRegistrationNumber = rn
+            append(&rb.voters, voter)
+            fmt.printfln("\tVOTER REGISTERED, REGISTRATION NUMBER SENT: %v", rn)
+
+
+            // violation: repeat registration
+            if rand.float32() < 0.5 {
+                i -= 1
+            }
         }
-        if p.age < 18 {
-            fmt.printfln("\tINELIGIBLE: You have to be an adult to vote")
-            continue
+        fmt.println()
+
+
+        fmt.println("List of eligible voters")
+        for v in rb.voters {
+            fmt.printfln("%v", v.fullname)
         }
+        fmt.println()
 
-        fmt.printfln("\tVOTER REGISTERED")
-        append(&voters, Voter{ p.id, p.fullname, p.key_pub, false })
-    }
-    fmt.println()
 
-    fmt.println("List of eligible voters")
-    for v in voters {
-        fmt.printfln("%v", v.fullname)
+
+        for &v in rb.voters {
+            av := AnonymousVoter{
+                key_pub = v.key_pub,
+                registrationNumber = v.registrationNumber,
+                alreadyVoted = false,
+            }
+
+            append(&anonymousVoters, av)
+        }
+        fmt.printfln("REGISTARTION BUREAU sent anonymized voter list to ELECTION COMMISSION")
+        fmt.println()
     }
-    fmt.println()
+
+
+
+
+
 
 
 
@@ -114,21 +191,15 @@ main :: proc () {
         candidates = {
             Candidate{ 67, "Petro Poroshenko", 0 },
             Candidate{ 69, "Amogus", 0 },
-        }
+        },
+        voters = anonymousVoters,
     }
 
-    if rsa.private_key_generate(&ec.key_prv) {
-        fmt.printfln("Generated private key for ELECTION COMMISSION")
-    }
-    else {
-        fmt.printfln("Failed to generate private key for ELECTION COMMISSION")
-    }
+    ec.key_prv, ec.key_pub = rsa.keygen()
+    fmt.printfln("Generated private key for ELECTION COMMISSION")
     
-    rsa.public_key_set_priv(&ec.key_pub, &ec.key_prv)
     EC_PUBLIC_KEY := ec.key_pub
     fmt.println()
-
-
 
     fmt.println("List of candidates")
     for c in ec.candidates {
@@ -138,90 +209,49 @@ main :: proc () {
 
 
 
+
+
+
     fmt.printfln("VOTING STARTED")
     encryptedBallots : [dynamic]EncryptedBallot
-    for &p in people {
+    for i : int = 0; i < len(people); i += 1 {
+        p := &people[i]
+
+        candidate := rand.choice(ec.candidates)
+
         ballot := Ballot{
-            voter_id = p.id,
-            candidate_id = rand.choice(ec.candidates).id,
+            uid = rand.uint64(),
+            registrationNumber = p.receivedRegistrationNumber,
+            candidate_id = candidate.id,
         }
 
-        // violation: impersonate someone
-        if rand.float32() < 0.15 {
-            ballot.voter_id = rand.choice(voters[:]).id
+        if p.rememberedUid == 0 {
+            p.rememberedUid = ballot.uid
         }
 
-        // violation: invalid ballot
-        if rand.float32() < 0.15 {
-            ballot.candidate_id = cast(u64)rand.int63()
+        eb : EncryptedBallot
+        ok : bool
+        eb.ballot, ok = rsa.encrypt_value(&EC_PUBLIC_KEY, ballot)
+        if !ok {
+            fmt.println("\tFATAL: Encryption failed")
         }
+        eb.signature = rsa.sign_value(&p.key_prv, ballot)
 
-        fmt.printf("%v", p.fullname)
-        if ballot.voter_id != p.id {
-            context.user_ptr = &ballot.voter_id
-            vi, _ := slice.linear_search_proc(voters[:], proc (v : Voter) -> bool {
-                return (v.id == (cast(^u64)context.user_ptr)^)
-            })
-
-            fmt.printf(" impersonates %v and", voters[vi].fullname)
-        }
-
-        context.user_ptr = &ballot.candidate_id
-        ci, cf := slice.linear_search_proc(ec.candidates, proc (c : Candidate) -> bool {
-            return (c.id == (cast(^u64)context.user_ptr)^)
-        })
-
-        if cf {
-            fmt.printf(" votes for %v", ec.candidates[ci].fullname)
-        }
-        else {
-            fmt.printf(" votes for an invalid candidate with id %v", ballot.candidate_id)
-        }
-
-
-
-        eb : EncryptedBallot = {
-            ballot    = make([]u8, rsa.public_key_size(&EC_PUBLIC_KEY)),
-            signature = make([]u8, rsa.public_key_size(&EC_PUBLIC_KEY)),
-        }
-
-        // violation: invalid encryption
-        fail_encrypt := rand.float32() < 0.15
-
-        result_encrypt := rsa.encrypt_oaep(
-            fail_encrypt ? &p.key_pub : &EC_PUBLIC_KEY,
-            .SHA512,
-            slice.bytes_from_ptr(&ballot, size_of(Ballot)),
-            eb.ballot)
-        if !result_encrypt {
-            fmt.printfln("FAILED TO ENCRYPT BALLOT")
-        }
-
-        result_sign := rsa.sign_pkcs1(
-            &p.key_prv,
-            .SHA512,
-            slice.bytes_from_ptr(&ballot, size_of(Ballot)),
-            eb.signature)
-        if !result_sign {
-            fmt.printfln("FAILED TO SIGN BALLOT")
-        }
 
         append(&encryptedBallots, eb)
 
-        // violation: repeat voting
-        if rand.float32() < 0.15 {
+        fmt.printfln("%v voted for %v (ID: %v)", p.fullname, candidate.fullname, ballot.uid)
+
+        // violation: reusing ID
+        if rand.float32() < 0.2 {
             append(&encryptedBallots, eb)
-            fmt.printf(" twice")
+            fmt.printfln("\tand sent the same ballot twice")
+            p.rememberedViolation = true
+        } // violation: voting twice
+        else if rand.float32() < 0.2 {
+            i -= 1
+            p.rememberedViolation = true
         }
-        else {
-            fmt.printf("")
-        }
-
-        if fail_encrypt {
-            fmt.printf(", but fails to encrypt it correctly")
-        }
-
-        fmt.println()
     }
     fmt.println("VOTING ENDED")
     fmt.println()
@@ -230,42 +260,48 @@ main :: proc () {
 
     fmt.println("COUNTING VOTES")
     rand.shuffle(encryptedBallots[:])
+    trackedIds : map[u64](struct{})
+    validBallots : [dynamic]PublicizedBallot
     for eb, i in encryptedBallots {
         fmt.printfln("Processing ballot #%v", i)
 
-        ballot : Ballot
-
-        _, result_decrypt := rsa.decrypt_oaep(
-            &ec.key_prv,
-            .SHA512,
-            eb.ballot,
-            slice.bytes_from_ptr(&ballot, size_of(Ballot)))
+        ballot, result_decrypt := rsa.decrypt_value(&ec.key_prv, eb.ballot, Ballot)
         if !result_decrypt {
             fmt.printfln("\tFATAL: failed to decrypt ballot")
             continue
         }
 
-        context.user_ptr = &ballot.voter_id
-        pi, _ := slice.linear_search_proc(people, proc (p : Person) -> bool {
-            return (p.id == (cast(^u64)context.user_ptr)^)
-        })
 
-        fmt.printfln("\tINFO: Ballot sender: %v", people[pi].fullname)
 
-        context.user_ptr = &ballot.voter_id
-        vi, vf := slice.linear_search_proc(voters[:], proc (v : Voter) -> bool {
-            return (v.id == (cast(^u64)context.user_ptr)^)
+        fmt.printfln("\tINFO: Ballot ID: %v", ballot.uid)
+        fmt.printfln("\tINFO: Registration Number: %v", ballot.registrationNumber)
+
+        _, ok := trackedIds[ballot.uid]
+        if ok {
+            fmt.printfln("\tDISMISSED: Ballot with the same id received twice")
+            continue
+        }
+
+
+
+
+        context.user_ptr = &ballot.registrationNumber
+        vi, vf := slice.linear_search_proc(ec.voters[:], proc (v : AnonymousVoter) -> bool {
+            return (v.registrationNumber == (cast(^u64)context.user_ptr)^)
         })
 
         if !vf {
-            fmt.printfln("\tDISMISSED: %v is not eligible for voting", people[pi].fullname)
+            fmt.printfln("\tDISMISSED: RN %v isn't valid", ballot.registrationNumber)
             continue
         }
 
-        if voters[vi].alreadyVoted {
-            fmt.printfln("\tDISMISSED: %v has already voted", people[pi].fullname)
+        if ec.voters[vi].alreadyVoted {
+            fmt.printfln("\tDISMISSED: Voter with RN %v has already voted", ec.voters[vi].registrationNumber)
             continue
         }
+
+
+
 
         context.user_ptr = &ballot.candidate_id
         ci, cf := slice.linear_search_proc(ec.candidates, proc (c : Candidate) -> bool {
@@ -282,12 +318,11 @@ main :: proc () {
 
 
 
-        result_verify := rsa.verify_pkcs1(
-            &voters[vi].key_pub,
-            .SHA512,
-            slice.bytes_from_ptr(&ballot, size_of(Ballot)),
-            eb.signature)
 
+
+
+
+        result_verify := rsa.verify_value(&ec.voters[vi].key_pub, ballot, eb.signature)
         if !result_verify {
             fmt.printfln("\tDISMISSED: couldn't verify ballot's authenticity")
             continue
@@ -295,9 +330,18 @@ main :: proc () {
 
 
 
+        trackedIds[ballot.uid] = {}
         ec.candidates[ci].votes += 1
-        voters[vi].alreadyVoted = true
-        fmt.printfln("\tACCEPTED: vote counted")
+        ec.voters[vi].alreadyVoted = true
+
+        // violation: dropping vote
+        if rand.float32() < 0.2 {
+            fmt.printfln("\tVIOLATION: Silently dropping the ballot because im evil")
+        }
+        else {
+            append(&validBallots, PublicizedBallot{ uid = ballot.uid, candidate_id = ballot.candidate_id })
+            fmt.printfln("\tACCEPTED: vote counted")
+        }
     }
     fmt.println()
 
@@ -306,5 +350,30 @@ main :: proc () {
     fmt.printfln("ELECTION RESULTS:")
     for c in ec.candidates {
         fmt.printfln("%v:\n\t%v votes", c.fullname, c.votes)
+    }
+
+    fmt.printfln("BALLOTS:")
+    for &vb in validBallots {
+        context.user_ptr = &vb.candidate_id
+        ci, _ := slice.linear_search_proc(ec.candidates, proc (c : Candidate) -> bool { return (c.id == (cast(^u64)context.user_ptr)^) })
+
+        fmt.printfln("\tID: %v | Candidate: %v", vb.uid, ec.candidates[ci].fullname)
+    }
+    fmt.println()
+
+
+    for &p in people {
+        context.user_ptr = &p.rememberedUid
+        bi, bf := slice.linear_search_proc(validBallots[:], proc (b : PublicizedBallot) -> bool { return (b.uid == (cast(^u64)context.user_ptr)^) })
+
+        if !bf {
+            fmt.printfln("%v failed to verify their vote! Remembered ID: %v", p.fullname, p.rememberedUid)
+            if p.rememberedViolation {
+                fmt.printfln("\t(keep in mind they violated voting process)")
+            }
+        }
+        else {
+            fmt.printfln("%v verified their vote! Remembered ID: %v", p.fullname, p.rememberedUid)
+        }
     }
 }
